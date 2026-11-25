@@ -1,0 +1,12 @@
+[package]
+name = "verkzchat-publicar"
+version = "1.0.0"
+edition = "2024"
+publish = false
+description = "Assina e monta a pasta de uma versão nova do VerkzChat para verkzsystem.tech/apps"
+
+# Projeto separado do VerkzChat: compila em segundos.
+[workspace]
+
+[dependencies]
+ring = "0.17"

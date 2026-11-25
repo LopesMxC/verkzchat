@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Name=VerkzChat
+GenericName=WhatsApp Client
+Comment=A native WhatsApp client
+Exec=verkzchat %U
+Icon=verkzchat
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=whatsapp;chat;messaging;
+StartupWMClass=verkzchat
+MimeType=x-scheme-handler/whatsapp;x-scheme-handler/wa;
+SingleMainWindow=true
+Actions=quit;
+
+[Desktop Action quit]
+Name=Quit VerkzChat
+Exec=verkzchat quit

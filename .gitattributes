@@ -1,0 +1,4 @@
+.github/workflows/*.lock.yml linguist-generated=true
+*.bat text eol=crlf
+*.iss text eol=crlf
+*.sh text eol=lf

@@ -1,0 +1,125 @@
+# Compila o VerkzChat na nuvem do GitHub. O compilar.bat dispara este fluxo
+# para gerar a versão de Mac (que só compila num Mac) e baixa o resultado.
+# Também dá para rodar pela aba Actions do repositório, em "Run workflow".
+name: Compilar VerkzChat
+
+on:
+  workflow_dispatch:
+    inputs:
+      sistemas:
+        description: "mac, linux, windows ou todos"
+        default: "mac"
+
+env:
+  # O Cargo.toml compila o app numa peça só (mais lento, binário um pouco
+  # menor). Aqui ele se divide em 16 partes em paralelo: a compilação do app,
+  # que tem um arquivo de 27 mil linhas, cai de quase uma hora para minutos.
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  # LTO ligado: app menor e mais otimizado, compilação mais lenta.
+  CARGO_PROFILE_RELEASE_LTO: "thin"
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  # As duas arquiteturas do Mac compilam ao mesmo tempo, em máquinas separadas.
+  mac-parte:
+    if: inputs.sistemas == 'mac' || inputs.sistemas == 'todos'
+    name: mac (${{ matrix.target }})
+    runs-on: macos-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust
+        run: rustup target add ${{ matrix.target }}
+      # Guarda as dependências compiladas: da segunda vez em diante é rápido.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Compilar
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parte-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/verkzchat
+          if-no-files-found: error
+          retention-days: 1
+
+  mac:
+    needs: mac-parte
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parte-*
+          path: partes
+      - name: Montar o VerkzChat.app universal
+        run: |
+          mkdir -p universal dist
+          lipo -create \
+            partes/parte-aarch64-apple-darwin/verkzchat \
+            partes/parte-x86_64-apple-darwin/verkzchat \
+            -output universal/verkzchat
+          chmod +x universal/verkzchat
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          bash packaging/macos/bundle.sh universal/verkzchat dist/VerkzChat.app "$version"
+          cd dist && ditto -c -k --keepParent VerkzChat.app "VerkzChat-$version-mac.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verkzchat-mac
+          path: dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    if: inputs.sistemas == 'linux' || inputs.sistemas == 'todos'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Debian 12: o binário roda em Debian 12, Ubuntu 22.10 e mais novos.
+    container: debian:12
+    steps:
+      - name: Dependências
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git sudo build-essential pkg-config \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
+            libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: actions/checkout@v4
+      - name: Compilar
+        run: bash packaging/compilar-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verkzchat-linux
+          path: |
+            dist/linux/*.deb
+            dist/linux/*.rpm
+            dist/linux/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    if: inputs.sistemas == 'windows' || inputs.sistemas == 'todos'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Compilar
+        run: cargo build --locked --release
+      - name: Instalador
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\verkzchat.exe dist\VerkzChat.exe
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DVersion=$version /DBinary=$PWD\target\release\verkzchat.exe /DOutputDir=$PWD\dist packaging\windows\verkzchat.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verkzchat-windows
+          path: dist/*.exe
+          if-no-files-found: error
